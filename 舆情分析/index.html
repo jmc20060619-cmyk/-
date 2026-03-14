@@ -1,0 +1,372 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseScope - 舆情分析总览</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="dashboard">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PS</div>
+        <div>
+          <p class="brand-title">PulseScope</p>
+          <p class="brand-subtitle">Sentiment Intelligence Workspace</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a href="./index.html" class="nav-link" data-nav="dashboard">总览</a>
+        <a href="./monitor.html" class="nav-link" data-nav="monitor">监测</a>
+        <a href="./detail.html" class="nav-link" data-nav="detail">详情</a>
+        <a href="./warning.html" class="nav-link" data-nav="warning">提醒</a>
+      </nav>
+
+      <section class="sidebar-panel">
+        <p class="panel-label">工作台定位</p>
+        <h3>大数据舆情分析 + 热点预测 + 个性化推送</h3>
+        <ul class="sidebar-points">
+          <li>多源舆情内容聚合与自动翻译</li>
+          <li>关键词提炼、热点预测与用户偏好推送</li>
+          <li>融合文本、视觉、地理和时间线索的多模态分析</li>
+        </ul>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Global Pulse</p>
+          <h1>实时舆情总览</h1>
+          <p class="hero-note">围绕舆情分类、关键词总结、热点预测和个性化推送，构建可视化的大数据分析工作台。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" type="button" data-action="refresh-dashboard">刷新总览</button>
+          <button class="primary-button" type="button" data-action="toggle-dashboard-translation">自动翻译：开</button>
+        </div>
+      </header>
+
+      <section class="source-banner">
+        <div>
+          <p class="eyebrow">Data Layer</p>
+          <h2>面向热点舆情预测的可视化分析平台</h2>
+          <p>后端负责聚合公开讨论、构建热点评分、生成多模态时空图分析摘要；前端负责用更强的可视化帮助你快速识别即将升温的话题。</p>
+        </div>
+        <div class="source-meta">
+          <span class="status-pill" id="dashboard-source-status">等待加载</span>
+          <span class="status-meta" id="dashboard-updated">最近更新：--</span>
+        </div>
+      </section>
+
+      <section class="panel search-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">API Connect</p>
+            <h3>外部 API 接入</h3>
+          </div>
+          <span class="text-muted" id="external-api-status">当前使用本地分析引擎</span>
+        </div>
+        <div class="search-result-grid">
+          <div class="search-bar">
+            <input id="external-api-base-url" class="search-input" type="url" placeholder="API 基地址，例如 https://api.example.com">
+            <input id="external-api-token" class="search-input" type="password" placeholder="Bearer Token，可选">
+          </div>
+          <div class="search-bar">
+            <input id="external-api-dashboard-endpoint" class="search-input" type="text" placeholder="Dashboard 接口，默认 /dashboard">
+            <input id="external-api-search-endpoint" class="search-input" type="text" placeholder="Search 接口，默认 /search">
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" type="button" data-action="test-external-api">测试连接</button>
+            <button class="primary-button" type="button" data-action="save-external-api">保存并启用</button>
+            <button class="ghost-button" type="button" data-action="disable-external-api">关闭外部 API</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="search-panel panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Search</p>
+            <h3>热点搜索</h3>
+          </div>
+          <span class="text-muted" id="dashboard-search-meta">输入关键词后可搜索热点并查看预测结果</span>
+        </div>
+        <div class="search-bar">
+          <input id="dashboard-search-input" class="search-input" type="search" placeholder="搜索想看的热点，例如 AI、品牌、发布会、社区争议">
+          <button class="primary-button search-button" type="button" data-action="search-dashboard">搜索热点</button>
+          <button class="ghost-button search-button" type="button" data-action="clear-dashboard-search">清空结果</button>
+        </div>
+        <div class="search-result-grid">
+          <div class="search-result-list" id="dashboard-search-results"></div>
+          <p class="empty-state" id="dashboard-search-empty">当前还没有搜索结果。</p>
+        </div>
+      </section>
+
+      <section class="hero-grid">
+        <article class="hero-card hero-card-wide">
+          <div class="card-header">
+            <div>
+              <p class="card-kicker">今日态势</p>
+              <h2 id="dashboard-headline">正在汇总最新讨论内容</h2>
+              <p class="hero-note" id="dashboard-summary">系统会把热点、情绪、预测和个性化推荐整合到一个总览视图中。</p>
+            </div>
+            <span class="badge badge-safe" id="dashboard-status">等待中</span>
+          </div>
+          <div class="hero-metrics">
+            <div>
+              <p class="metric-label">总声量</p>
+              <p class="metric-value" id="metric-total-hits">--</p>
+              <p class="metric-trend" id="metric-total-hits-note">聚合内容总量</p>
+            </div>
+            <div>
+              <p class="metric-label">重点事件</p>
+              <p class="metric-value" id="metric-key-events">--</p>
+              <p class="metric-trend" id="metric-key-events-note">按热度自动排序</p>
+            </div>
+            <div>
+              <p class="metric-label">翻译覆盖率</p>
+              <p class="metric-value" id="metric-translation-rate">--</p>
+              <p class="metric-trend" id="metric-translation-note">自动翻译命中结果</p>
+            </div>
+          </div>
+        </article>
+
+        <article class="hero-card pulse-card">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Sentiment Pulse</p>
+              <h3>情绪脉冲</h3>
+            </div>
+          </div>
+          <div class="pulse-card-body">
+            <div class="sentiment-ring" id="dashboard-sentiment-ring">
+              <div class="sentiment-ring-content">
+                <strong id="dashboard-ring-value">--</strong>
+                <span id="dashboard-ring-label">波动指数</span>
+              </div>
+            </div>
+            <div class="sentiment-bars" id="dashboard-sentiment-bars"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <p class="stat-title">高波动事件</p>
+          <p class="stat-value" id="stat-high-heat">--</p>
+          <p class="stat-foot">热度与互动同时上升</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">平均互动</p>
+          <p class="stat-value" id="stat-avg-comments">--</p>
+          <p class="stat-foot">单条内容平均评论量</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">活跃来源</p>
+          <p class="stat-value" id="stat-source-count">--</p>
+          <p class="stat-foot">当前活跃渠道数量</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">偏好命中</p>
+          <p class="stat-value" id="stat-preference-match">--</p>
+          <p class="stat-foot">符合你的兴趣主题</p>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel model-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Multimodal GNN</p>
+              <h3>多模态时空图模型</h3>
+            </div>
+            <span class="badge badge-mid" id="dashboard-model-score">融合分数 --</span>
+          </div>
+          <p class="summary-inline" id="dashboard-model-summary">正在生成模型分析摘要。</p>
+          <div class="model-channel-grid" id="dashboard-model-channels"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Keywords</p>
+              <h3>关键词聚类</h3>
+            </div>
+          </div>
+          <div class="keyword-cluster" id="dashboard-keyword-cluster"></div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Spatial Heatmap</p>
+              <h3>空间扩散分布</h3>
+            </div>
+          </div>
+          <div class="spatial-grid" id="dashboard-spatial-heatmap"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Temporal Flow</p>
+              <h3>时间演化节奏</h3>
+            </div>
+          </div>
+          <div class="trend-list" id="dashboard-temporal-evolution"></div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Predictions</p>
+              <h3>热点预测</h3>
+            </div>
+          </div>
+          <div class="prediction-list" id="dashboard-prediction-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Preference Embedding</p>
+              <h3>用户偏好画像</h3>
+            </div>
+          </div>
+          <div class="preference-embedding" id="dashboard-preference-embedding"></div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Topic Heat</p>
+              <h3>主题热度分布</h3>
+            </div>
+          </div>
+          <div class="category-stack" id="dashboard-category-heat"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Channels</p>
+              <h3>来源构成</h3>
+            </div>
+          </div>
+          <div class="source-list" id="dashboard-source-list"></div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Trend</p>
+              <h3>近 7 日声量走势</h3>
+            </div>
+            <span class="text-muted" id="dashboard-trend-meta">等待统计</span>
+          </div>
+          <div class="trend-list" id="dashboard-trend-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Quick Insights</p>
+              <h3>快速研判</h3>
+            </div>
+          </div>
+          <div class="insight-tiles" id="dashboard-insight-tiles"></div>
+        </article>
+      </section>
+
+      <section class="preference-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Personalization</p>
+              <h3>按你的偏好推送</h3>
+            </div>
+          </div>
+          <p class="text-muted">选择你更关心的方向，系统会优先推荐并对新出现的相关内容做自动推送提示。</p>
+          <div class="preference-chip-group" id="dashboard-preference-chips"></div>
+          <div class="preference-actions">
+            <button class="ghost-button" type="button" data-action="toggle-push">智能推送：开</button>
+            <p class="summary-inline" id="dashboard-push-summary">等待个性化推荐结果</p>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Recommended</p>
+              <h3>为你推荐</h3>
+            </div>
+          </div>
+          <div class="recommendation-list" id="dashboard-recommendation-list"></div>
+          <p class="empty-state is-hidden" id="dashboard-recommendation-empty">当前没有可推荐的内容。</p>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Push Types</p>
+              <h3>推送类型分布</h3>
+            </div>
+          </div>
+          <div class="signal-type-grid" id="dashboard-push-types"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Push Feed</p>
+              <h3>智能推送流</h3>
+            </div>
+          </div>
+          <div class="signal-list" id="dashboard-push-feed"></div>
+          <p class="empty-state is-hidden" id="dashboard-push-feed-empty">当前没有新的智能推送信号。</p>
+        </article>
+      </section>
+
+      <section class="table-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Focus List</p>
+            <h3>实时热点清单</h3>
+          </div>
+          <a class="text-link" href="./monitor.html">进入监测</a>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>事件名称</th>
+                <th>主题</th>
+                <th>热度</th>
+                <th>状态</th>
+                <th>来源</th>
+                <th>跟进建议</th>
+              </tr>
+            </thead>
+            <tbody id="dashboard-table-body"></tbody>
+          </table>
+        </div>
+        <p class="empty-state is-hidden" id="dashboard-table-empty">当前暂无热点事件。</p>
+      </section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,147 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseScope - 提醒中心</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="warning">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PS</div>
+        <div>
+          <p class="brand-title">PulseScope</p>
+          <p class="brand-subtitle">Sentiment Intelligence Workspace</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a href="./index.html" class="nav-link" data-nav="dashboard">总览</a>
+        <a href="./monitor.html" class="nav-link" data-nav="monitor">监测</a>
+        <a href="./detail.html" class="nav-link" data-nav="detail">详情</a>
+        <a href="./warning.html" class="nav-link" data-nav="warning">提醒</a>
+      </nav>
+
+      <section class="sidebar-panel">
+        <p class="panel-label">提醒逻辑</p>
+        <h3>基于热度、互动和扩散自动分级</h3>
+        <p>这不是政务专用预警，而是通用舆情提醒面板，用来快速发现值得优先复核的主题。</p>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Alert Center</p>
+          <h1>提醒中心</h1>
+          <p class="hero-note">把高波动事件、触发规则和值班队列放在一个页面里，适合快速做日常跟踪。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" type="button" data-action="refresh-warning">刷新提醒</button>
+          <button class="primary-button" type="button" data-action="toggle-warning-translation">自动翻译：开</button>
+          <button class="ghost-button" type="button" data-action="copy-warning-brief">复制摘要</button>
+          <button class="ghost-button" type="button" data-action="download-warning-brief">下载摘要</button>
+        </div>
+      </header>
+
+      <section class="source-banner">
+        <div>
+          <p class="eyebrow">Alert Layer</p>
+          <h2>提醒页会自动聚合高波动内容</h2>
+          <p>系统会根据热度、互动和多源扩散情况生成提醒等级，并把对应事件链接到详情页继续查看。</p>
+        </div>
+        <div class="source-meta">
+          <span class="status-pill" id="warning-source-status">等待加载</span>
+          <span class="status-meta" id="warning-updated">最近更新：--</span>
+        </div>
+      </section>
+
+      <section class="panel brief-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Summary</p>
+            <h3>提醒摘要</h3>
+          </div>
+          <span class="text-muted">适合交接、晨会和值班同步</span>
+        </div>
+        <pre class="brief-preview" id="warning-brief-preview">正在生成提醒摘要...</pre>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <p class="stat-title">红色提醒</p>
+          <p class="stat-value" id="warning-stat-red">--</p>
+          <p class="stat-foot">需要立即关注</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">橙色提醒</p>
+          <p class="stat-value" id="warning-stat-orange">--</p>
+          <p class="stat-foot">建议优先复核</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">黄色提醒</p>
+          <p class="stat-value" id="warning-stat-yellow">--</p>
+          <p class="stat-foot">持续观察</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">已闭环</p>
+          <p class="stat-value" id="warning-stat-closed">--</p>
+          <p class="stat-foot">本轮累计处理数</p>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Rules</p>
+              <h3>触发规则</h3>
+            </div>
+          </div>
+          <div class="rules-list" id="warning-rules-list"></div>
+          <p class="empty-state is-hidden" id="warning-rules-empty">当前暂无提醒规则。</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Queue</p>
+              <h3>当前响应队列</h3>
+            </div>
+          </div>
+          <div class="duty-board" id="warning-duty-board"></div>
+          <p class="empty-state is-hidden" id="warning-duty-empty">当前暂无响应队列信息。</p>
+        </article>
+      </section>
+
+      <section class="table-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Alert Feed</p>
+            <h3>实时提醒事件</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>事件</th>
+                <th>触发条件</th>
+                <th>等级</th>
+                <th>状态</th>
+                <th>建议动作</th>
+              </tr>
+            </thead>
+            <tbody id="warning-table-body"></tbody>
+          </table>
+        </div>
+        <p class="empty-state is-hidden" id="warning-table-empty">当前暂无提醒事件。</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

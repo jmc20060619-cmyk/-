@@ -1,0 +1,161 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseScope - 事件详情</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="detail">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PS</div>
+        <div>
+          <p class="brand-title">PulseScope</p>
+          <p class="brand-subtitle">Sentiment Intelligence Workspace</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a href="./index.html" class="nav-link" data-nav="dashboard">总览</a>
+        <a href="./monitor.html" class="nav-link" data-nav="monitor">监测</a>
+        <a href="./detail.html" class="nav-link" data-nav="detail">详情</a>
+        <a href="./warning.html" class="nav-link" data-nav="warning">提醒</a>
+      </nav>
+
+      <section class="sidebar-panel">
+        <p class="panel-label">当前事件</p>
+        <h3 id="detail-sidebar-title">等待后端数据</h3>
+        <p id="detail-sidebar-summary">这里会展示当前事件的摘要、热度状态、扩散情况和建议动作。</p>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Event Focus</p>
+          <h1 id="detail-title">事件详情加载中</h1>
+          <p class="hero-note" id="detail-title-note">正在拉取时间线、情绪结构和关联内容。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" type="button" data-action="refresh-detail">刷新事件</button>
+          <button class="primary-button" type="button" data-action="toggle-detail-translation">自动翻译：开</button>
+          <button class="ghost-button" type="button" data-action="copy-detail-brief">复制简报</button>
+          <button class="ghost-button" type="button" data-action="download-detail-brief">下载简报</button>
+        </div>
+      </header>
+
+      <section class="source-banner">
+        <div>
+          <p class="eyebrow">Event Layer</p>
+          <h2>详情页会把单条热点拆成可判断的结构</h2>
+          <p>你可以在一个页面里同时看到时间线、情绪占比、关联内容和建议动作，而不是只盯着一条标题。</p>
+        </div>
+        <div class="source-meta">
+          <span class="status-pill" id="detail-source-status">等待加载</span>
+          <span class="status-meta" id="detail-updated">最近更新：--</span>
+        </div>
+      </section>
+
+      <section class="panel brief-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Briefing</p>
+            <h3>事件研判简报</h3>
+          </div>
+          <span class="text-muted">可直接复制到群消息、日报或邮件</span>
+        </div>
+        <pre class="brief-preview" id="detail-brief-preview">正在生成事件简报...</pre>
+      </section>
+
+      <section class="detail-header">
+        <article class="detail-summary">
+          <div class="detail-meta">
+            <span class="badge badge-safe" id="detail-risk-badge">待分析</span>
+            <span id="detail-first-seen">首次发现：-</span>
+            <span id="detail-peak-time">传播峰值：--</span>
+            <span id="detail-spread-status">传播状态：--</span>
+          </div>
+          <p id="detail-summary-text">正在等待后端返回事件摘要。</p>
+        </article>
+      </section>
+
+      <section class="content-grid detail-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Timeline</p>
+              <h3>事件演化时间线</h3>
+            </div>
+          </div>
+          <div class="timeline" id="detail-timeline"></div>
+          <p class="empty-state is-hidden" id="detail-timeline-empty">当前暂无事件时间线。</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Sentiment</p>
+              <h3>情绪结构</h3>
+            </div>
+          </div>
+          <div class="sentiment-bars" id="detail-sentiment-bars"></div>
+          <p class="empty-state is-hidden" id="detail-sentiment-empty">当前暂无情绪结构数据。</p>
+        </article>
+      </section>
+
+      <section class="content-grid detail-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Forecast</p>
+              <h3>未来趋势预测</h3>
+            </div>
+          </div>
+          <p class="summary-inline" id="detail-forecast-summary">系统会结合当前热度、情绪和扩散情况生成趋势预测。</p>
+          <div class="forecast-grid" id="detail-forecast-cards"></div>
+          <p class="empty-state is-hidden" id="detail-forecast-empty">当前暂无可展示的趋势预测。</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Audience</p>
+              <h3>公众反应预判</h3>
+            </div>
+          </div>
+          <div class="reaction-list" id="detail-reaction-list"></div>
+          <p class="empty-state is-hidden" id="detail-reaction-empty">当前暂无可展示的人群反应预判。</p>
+        </article>
+      </section>
+
+      <section class="content-grid detail-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Actions</p>
+              <h3>建议动作清单</h3>
+            </div>
+          </div>
+          <div class="action-list" id="detail-action-list"></div>
+          <p class="empty-state is-hidden" id="detail-action-empty">当前暂无建议动作。</p>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Related</p>
+              <h3>关联内容</h3>
+            </div>
+          </div>
+          <div class="feed-list" id="detail-related-list"></div>
+          <p class="empty-state is-hidden" id="detail-related-empty">当前暂无关联内容。</p>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

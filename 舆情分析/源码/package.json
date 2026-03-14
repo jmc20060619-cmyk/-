@@ -1,0 +1,8 @@
+{
+  "name": "gov-insight-console",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "build:exe": "powershell -ExecutionPolicy Bypass -File .\\build-exe.ps1"
+  }
+}

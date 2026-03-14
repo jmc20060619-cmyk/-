@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "base_url": "https://your-api-host.com/api",
+  "token": "",
+  "timeout_sec": 12,
+  "endpoints": {
+    "dashboard": "/dashboard",
+    "monitor": "/monitor",
+    "events": "/events",
+    "warnings": "/warnings",
+    "search": "/search"
+  }
+}

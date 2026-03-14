@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PulseScope - 实时监测</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body data-page="monitor">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">PS</div>
+        <div>
+          <p class="brand-title">PulseScope</p>
+          <p class="brand-subtitle">Sentiment Intelligence Workspace</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <a href="./index.html" class="nav-link" data-nav="dashboard">总览</a>
+        <a href="./monitor.html" class="nav-link" data-nav="monitor">监测</a>
+        <a href="./detail.html" class="nav-link" data-nav="detail">详情</a>
+        <a href="./warning.html" class="nav-link" data-nav="warning">提醒</a>
+      </nav>
+
+      <section class="sidebar-panel">
+        <p class="panel-label">当前模式</p>
+        <h3 id="monitor-sidebar-title">实时追踪</h3>
+        <p id="monitor-sidebar-copy">监测页会持续刷新最新内容，并按你的偏好标出更值得优先关注的条目。</p>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Live Monitor</p>
+          <h1>实时监测列表</h1>
+          <p class="hero-note">用一张工作台同时看最新内容流、情绪结构、标签和与你偏好匹配的推荐结果。</p>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-button" type="button" data-action="refresh-monitor">刷新实时数据</button>
+          <button class="primary-button" type="button" data-action="toggle-monitor-translation">自动翻译：开</button>
+        </div>
+      </header>
+
+      <section class="source-banner">
+        <div>
+          <p class="eyebrow">Stream Layer</p>
+          <h2>监测页会同步展示舆情流和推荐命中</h2>
+          <p>除了内容本身，这里还会把情绪脉冲、偏好命中和推荐清单一起展示，方便你快速做判断。</p>
+        </div>
+        <div class="source-meta">
+          <span class="status-pill" id="monitor-source-status">等待加载</span>
+          <span class="status-meta" id="monitor-updated">最近更新：--</span>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <p class="stat-title">当前类目声量</p>
+          <p class="stat-value" id="monitor-stat-total">--</p>
+          <p class="stat-foot">检索到的公开内容总量</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">偏好命中</p>
+          <p class="stat-value" id="monitor-stat-match">--</p>
+          <p class="stat-foot">符合关注方向的条目</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">平均互动</p>
+          <p class="stat-value" id="monitor-stat-comments">--</p>
+          <p class="stat-foot">当前列表平均评论量</p>
+        </article>
+        <article class="stat-card">
+          <p class="stat-title">高波动条目</p>
+          <p class="stat-value" id="monitor-stat-risk">--</p>
+          <p class="stat-foot">值得优先复核的内容</p>
+        </article>
+      </section>
+
+      <section class="filter-bar" data-filter-group="monitor">
+        <button class="chip chip-active" type="button" data-filter="all" aria-pressed="true">全部</button>
+        <button class="chip" type="button" data-filter="brand" aria-pressed="false">品牌口碑</button>
+        <button class="chip" type="button" data-filter="product" aria-pressed="false">产品反馈</button>
+        <button class="chip" type="button" data-filter="campaign" aria-pressed="false">热点营销</button>
+        <button class="chip" type="button" data-filter="community" aria-pressed="false">社区讨论</button>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Live Feed</p>
+              <h3 id="monitor-feed-title">最新内容流</h3>
+            </div>
+            <span class="text-muted" id="monitor-feed-meta">等待加载</span>
+          </div>
+          <div class="feed-list" id="feed-list"></div>
+          <p class="empty-state is-hidden" id="feed-empty">当前没有可展示的实时内容。</p>
+        </article>
+
+        <article class="panel monitor-side-stack">
+          <div>
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Preference</p>
+                <h3>我的关注方向</h3>
+              </div>
+            </div>
+            <div class="preference-chip-group" id="monitor-preference-chips"></div>
+            <div class="preference-actions">
+              <button class="ghost-button" type="button" data-action="toggle-push">智能推送：开</button>
+              <p class="summary-inline" id="monitor-preference-summary">等待偏好结果</p>
+            </div>
+          </div>
+
+          <div>
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">Sentiment</p>
+                <h3>当前情绪结构</h3>
+              </div>
+            </div>
+            <div class="sentiment-bars" id="monitor-sentiment-bars"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Topic Tags</p>
+              <h3>当前标签聚合</h3>
+            </div>
+          </div>
+          <div class="tag-cloud" id="tag-cloud"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Push Feed</p>
+              <h3>智能推送流</h3>
+            </div>
+          </div>
+          <div class="signal-list" id="monitor-push-feed"></div>
+          <p class="empty-state is-hidden" id="monitor-push-feed-empty">当前没有新的监测推送信号。</p>
+        </article>
+      </section>
+
+      <section class="table-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Result Table</p>
+            <h3>监测结果列表</h3>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>标题</th>
+                <th>来源</th>
+                <th>发布时间</th>
+                <th>热度</th>
+                <th>评论数</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="topic-table-body"></tbody>
+          </table>
+        </div>
+        <p class="empty-state is-hidden" id="table-empty">当前分类下暂无监测结果。</p>
+      </section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
