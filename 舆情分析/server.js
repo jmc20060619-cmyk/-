@@ -1,10 +1,14 @@
 ﻿const http = require("http");
 const https = require("https");
+const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 4173);
 const ROOT_DIR = __dirname;
+const EXTERNAL_CONFIG_PATH = path.join(ROOT_DIR, "external_api_config.json");
+const AUTH_COOKIE_NAME = "pulse_scope_session";
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const STATIC_MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -41,6 +45,33 @@ const LIVE_FETCH_TIMEOUT_MS = 8000;
 const LIVE_CACHE_TTL_MS = 3 * 60 * 1000;
 const LIVE_STORY_LIMIT = 24;
 const REGION_LABELS = ["华东", "华北", "华南", "西部"];
+const DEFAULT_EXTERNAL_API_CONFIG = Object.freeze({
+  enabled: false,
+  base_url: "",
+  token: "",
+  timeout_sec: 12,
+  endpoints: {
+    dashboard: "/dashboard",
+    monitor: "/monitor",
+    events: "/events",
+    warnings: "/warnings",
+    search: "/search"
+  }
+});
+const DEFAULT_USERS = [
+  {
+    username: process.env.PULSE_ADMIN_USER || "admin",
+    password: process.env.PULSE_ADMIN_PASSWORD || "admin123456",
+    role: "admin",
+    displayName: "管理员"
+  },
+  {
+    username: process.env.PULSE_VIEWER_USER || "viewer",
+    password: process.env.PULSE_VIEWER_PASSWORD || "viewer123456",
+    role: "viewer",
+    displayName: "普通用户"
+  }
+];
 const CATEGORY_PROFILES = {
   brand: {
     keywords: ["company", "startup", "ceo", "business", "brand", "policy", "trust", "privacy", "acquires", "acquisition", "lawsuit"],
@@ -64,6 +95,7 @@ const liveCache = {
   recent: { items: null, fetchedAt: 0 },
   search: new Map()
 };
+const sessions = new Map();
 
 const STORY_SEED = [
   { id: "brand-1", category: "brand", originalTitle: "AI phone brand faces backlash after update changes camera style", translatedTitle: "AI 手机品牌因相机风格更新引发争议", url: "https://example.com/brand-1", source: "techpulse.com", author: "Mia", createdAt: "2026-03-12T07:20:00.000Z", points: 90, comments: 54, region: "华东", visualTags: ["界面截图", "产品图片"] },
@@ -80,11 +112,251 @@ const STORY_SEED = [
   { id: "community-3", category: "community", originalTitle: "Niche forum starts collecting evidence on repeated bug reports", translatedTitle: "垂直论坛开始收集重复 Bug 反馈证据", url: "https://example.com/community-3", source: "nichecircle.net", author: "Owen", createdAt: "2026-03-11T16:40:00.000Z", points: 46, comments: 35, region: "华北", visualTags: ["评论截图"] }
 ];
 
-function sendJson(response, statusCode, payload) {
+function normalizeEndpoint(value, fallbackValue) {
+  const trimmed = String(value || fallbackValue || "").trim();
+  if (!trimmed) {
+    return fallbackValue;
+  }
+
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function normalizeExternalApiConfig(config = {}) {
+  const baseUrl = String(config.base_url || "").trim().replace(/\/+$/, "");
+
+  return {
+    enabled: Boolean(config.enabled && baseUrl),
+    base_url: baseUrl,
+    token: String(config.token || "").trim(),
+    timeout_sec: clamp(Number(config.timeout_sec) || DEFAULT_EXTERNAL_API_CONFIG.timeout_sec, 3, 60),
+    endpoints: {
+      dashboard: normalizeEndpoint(config.endpoints?.dashboard, DEFAULT_EXTERNAL_API_CONFIG.endpoints.dashboard),
+      monitor: normalizeEndpoint(config.endpoints?.monitor, DEFAULT_EXTERNAL_API_CONFIG.endpoints.monitor),
+      events: normalizeEndpoint(config.endpoints?.events, DEFAULT_EXTERNAL_API_CONFIG.endpoints.events),
+      warnings: normalizeEndpoint(config.endpoints?.warnings, DEFAULT_EXTERNAL_API_CONFIG.endpoints.warnings),
+      search: normalizeEndpoint(config.endpoints?.search, DEFAULT_EXTERNAL_API_CONFIG.endpoints.search)
+    }
+  };
+}
+
+async function readExternalApiConfig() {
+  try {
+    const raw = await fs.readFile(EXTERNAL_CONFIG_PATH, "utf8");
+    return normalizeExternalApiConfig(JSON.parse(raw));
+  } catch {
+    return normalizeExternalApiConfig(DEFAULT_EXTERNAL_API_CONFIG);
+  }
+}
+
+async function writeExternalApiConfig(config) {
+  const normalized = normalizeExternalApiConfig(config);
+  await fs.writeFile(EXTERNAL_CONFIG_PATH, JSON.stringify(normalized, null, 2), "utf8");
+  return normalized;
+}
+
+function parseCookies(request) {
+  const cookieHeader = String(request.headers.cookie || "");
+  return cookieHeader.split(";").reduce((result, part) => {
+    const [rawName, ...rest] = part.trim().split("=");
+    if (!rawName) {
+      return result;
+    }
+
+    result[rawName] = decodeURIComponent(rest.join("=") || "");
+    return result;
+  }, {});
+}
+
+function pruneExpiredSessions() {
+  const now = Date.now();
+  sessions.forEach((session, token) => {
+    if (!session || session.expiresAt <= now) {
+      sessions.delete(token);
+    }
+  });
+}
+
+function getSessionFromRequest(request) {
+  pruneExpiredSessions();
+  const token = parseCookies(request)[AUTH_COOKIE_NAME];
+  if (!token) {
+    return null;
+  }
+
+  const session = sessions.get(token);
+  if (!session) {
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+
+  return { token, ...session };
+}
+
+function buildSessionCookie(token) {
+  return `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`;
+}
+
+function buildClearedSessionCookie() {
+  return `${AUTH_COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`;
+}
+
+function serializeUser(session) {
+  if (!session) {
+    return null;
+  }
+
+  return {
+    username: session.username,
+    role: session.role,
+    displayName: session.displayName
+  };
+}
+
+function requireSession(request, response, { adminOnly = false } = {}) {
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    sendJson(response, 401, { error: "请先登录后再继续。", code: "AUTH_REQUIRED" });
+    return null;
+  }
+
+  if (adminOnly && session.role !== "admin") {
+    sendJson(response, 403, { error: "仅管理员可以执行这个设置操作。", code: "FORBIDDEN" });
+    return null;
+  }
+
+  return session;
+}
+
+async function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+
+    request.on("data", (chunk) => {
+      chunks.push(chunk);
+      const totalBytes = chunks.reduce((sum, item) => sum + item.length, 0);
+      if (totalBytes > 1024 * 1024) {
+        reject(new Error("Request body too large"));
+        request.destroy();
+      }
+    });
+
+    request.on("end", () => {
+      try {
+        const raw = Buffer.concat(chunks).toString("utf8").trim();
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    request.on("error", reject);
+  });
+}
+
+async function requestRemoteJson(urlValue, { headers = {}, timeoutMs = LIVE_FETCH_TIMEOUT_MS } = {}) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(urlValue);
+    const transport = target.protocol === "http:" ? http : https;
+    const request = transport.request(target, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "PulseScope/1.0",
+        ...headers
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`Upstream responded with status ${response.statusCode}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+
+    request.setTimeout(timeoutMs, () => request.destroy(new Error("Upstream request timed out")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function buildExternalRequestUrl(config, endpointKey, requestUrl, suffix = "") {
+  const endpoint = normalizeEndpoint(config.endpoints?.[endpointKey], DEFAULT_EXTERNAL_API_CONFIG.endpoints[endpointKey]);
+  const target = new URL(config.base_url);
+  target.pathname = `${target.pathname.replace(/\/$/, "")}${endpoint}${suffix ? `/${encodeURIComponent(suffix)}` : ""}`;
+
+  requestUrl.searchParams.forEach((value, key) => {
+    if (key !== "refresh") {
+      target.searchParams.append(key, value);
+    }
+  });
+
+  return target.toString();
+}
+
+async function maybeFetchExternalPayload(requestUrl, endpointKey, suffix = "") {
+  const config = await readExternalApiConfig();
+  if (!config.enabled || !config.base_url) {
+    return null;
+  }
+
+  const headers = config.token ? { Authorization: `Bearer ${config.token}` } : {};
+  const urlValue = buildExternalRequestUrl(config, endpointKey, requestUrl, suffix);
+
+  try {
+    return await requestRemoteJson(urlValue, {
+      headers,
+      timeoutMs: config.timeout_sec * 1000
+    });
+  } catch (error) {
+    console.error(`External API fallback triggered for ${endpointKey}:`, error.message);
+    return null;
+  }
+}
+
+async function testExternalApiConnection() {
+  const config = await readExternalApiConfig();
+  if (!config.enabled || !config.base_url) {
+    return { ok: false, message: "当前没有启用外部 API，仍然会使用本地分析引擎。" };
+  }
+
+  const target = new URL(buildExternalRequestUrl(config, "dashboard", new URL("http://localhost/api/dashboard")));
+  const headers = config.token ? { Authorization: `Bearer ${config.token}` } : {};
+
+  try {
+    await requestRemoteJson(target.toString(), {
+      headers,
+      timeoutMs: config.timeout_sec * 1000
+    });
+    return { ok: true, message: `外部 API 连接成功：${config.base_url}` };
+  } catch (error) {
+    return { ok: false, message: `外部 API 连接失败：${error.message}` };
+  }
+}
+
+function findMatchingUser(username, password) {
+  const normalizedUsername = String(username || "").trim();
+  const normalizedPassword = String(password || "");
+  return DEFAULT_USERS.find((user) => user.username === normalizedUsername && user.password === normalizedPassword) || null;
+}
+
+function sendJson(response, statusCode, payload, extraHeaders = {}) {
   response.writeHead(statusCode, {
     "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store",
-    "Content-Type": "application/json; charset=utf-8"
+    "Content-Type": "application/json; charset=utf-8",
+    ...extraHeaders
   });
   response.end(JSON.stringify(payload));
 }
@@ -725,15 +997,197 @@ async function buildSearchPayload(query = "", interestParam = "", forceRefresh =
   };
 }
 
-async function handleApiRequest(requestUrl, response) {
+async function resolveApiPayload(endpointKey, requestUrl, localBuilder, suffix = "") {
+  const externalPayload = await maybeFetchExternalPayload(requestUrl, endpointKey, suffix);
+  if (externalPayload) {
+    return externalPayload;
+  }
+
+  return localBuilder();
+}
+
+async function handleAuthRequest(request, requestUrl, response) {
+  if (requestUrl.pathname === "/api/auth/status") {
+    if (request.method !== "GET") {
+      sendJson(response, 405, { error: "Method not allowed" });
+      return;
+    }
+
+    const session = getSessionFromRequest(request);
+    sendJson(response, 200, {
+      authenticated: Boolean(session),
+      user: serializeUser(session)
+    });
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/auth/login") {
+    if (request.method !== "POST") {
+      sendJson(response, 405, { error: "Method not allowed" });
+      return;
+    }
+
+    try {
+      const body = await readJsonBody(request);
+      const user = findMatchingUser(body.username, body.password);
+      if (!user) {
+        sendJson(response, 401, { error: "账号或密码不正确。", code: "INVALID_CREDENTIALS" });
+        return;
+      }
+
+      const token = crypto.randomBytes(24).toString("hex");
+      sessions.set(token, {
+        username: user.username,
+        role: user.role,
+        displayName: user.displayName,
+        expiresAt: Date.now() + SESSION_TTL_MS
+      });
+
+      sendJson(response, 200, {
+        ok: true,
+        user: serializeUser(user)
+      }, {
+        "Set-Cookie": buildSessionCookie(token)
+      });
+    } catch (error) {
+      sendJson(response, 400, { error: "登录请求格式不正确。", detail: error.message });
+    }
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/auth/logout") {
+    if (request.method !== "POST") {
+      sendJson(response, 405, { error: "Method not allowed" });
+      return;
+    }
+
+    const session = getSessionFromRequest(request);
+    if (session?.token) {
+      sessions.delete(session.token);
+    }
+
+    sendJson(response, 200, { ok: true }, {
+      "Set-Cookie": buildClearedSessionCookie()
+    });
+    return;
+  }
+
+  sendNotFound(response);
+}
+
+async function handleApiRequest(request, requestUrl, response) {
+  if (requestUrl.pathname.startsWith("/api/auth/")) {
+    await handleAuthRequest(request, requestUrl, response);
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/health") {
+    sendJson(response, 200, { status: "ok", timestamp: new Date().toISOString() });
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/external-config") {
+    const session = requireSession(request, response, { adminOnly: true });
+    if (!session) {
+      return;
+    }
+
+    if (request.method === "GET") {
+      sendJson(response, 200, await readExternalApiConfig());
+      return;
+    }
+
+    if (request.method === "POST") {
+      try {
+        const body = await readJsonBody(request);
+        const savedConfig = await writeExternalApiConfig(body);
+        sendJson(response, 200, savedConfig);
+      } catch (error) {
+        sendJson(response, 400, { error: "外部 API 配置保存失败。", detail: error.message });
+      }
+      return;
+    }
+
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/external-test") {
+    const session = requireSession(request, response, { adminOnly: true });
+    if (!session) {
+      return;
+    }
+
+    if (request.method !== "GET") {
+      sendJson(response, 405, { error: "Method not allowed" });
+      return;
+    }
+
+    sendJson(response, 200, await testExternalApiConnection());
+    return;
+  }
+
+  if (request.method !== "GET") {
+    sendJson(response, 405, { error: "Method not allowed" });
+    return;
+  }
+
+  const session = requireSession(request, response);
+  if (!session) {
+    return;
+  }
+
   const forceRefresh = requestUrl.searchParams.has("refresh");
-  if (requestUrl.pathname === "/api/health") { sendJson(response, 200, { status: "ok", timestamp: new Date().toISOString() }); return; }
-  if (requestUrl.pathname === "/api/dashboard") { sendJson(response, 200, await buildDashboardPayload(requestUrl.searchParams.get("interest") || "", forceRefresh)); return; }
-  if (requestUrl.pathname === "/api/monitor") { sendJson(response, 200, await buildMonitorPayload(requestUrl.searchParams.get("filter") || "all", requestUrl.searchParams.get("interest") || "", forceRefresh)); return; }
-  if (requestUrl.pathname.startsWith("/api/events/")) { sendJson(response, 200, await buildEventPayload(decodeURIComponent(requestUrl.pathname.replace("/api/events/", "")), forceRefresh)); return; }
-  if (requestUrl.pathname === "/api/events") { sendJson(response, 200, await buildEventPayload(requestUrl.searchParams.get("id") || "", forceRefresh)); return; }
-  if (requestUrl.pathname === "/api/warnings") { sendJson(response, 200, await buildWarningsPayload(requestUrl.searchParams.get("interest") || "", forceRefresh)); return; }
-  if (requestUrl.pathname === "/api/search") { sendJson(response, 200, await buildSearchPayload(requestUrl.searchParams.get("query") || "", requestUrl.searchParams.get("interest") || "", forceRefresh)); return; }
+  if (requestUrl.pathname === "/api/dashboard") {
+    sendJson(response, 200, await resolveApiPayload(
+      "dashboard",
+      requestUrl,
+      () => buildDashboardPayload(requestUrl.searchParams.get("interest") || "", forceRefresh)
+    ));
+    return;
+  }
+  if (requestUrl.pathname === "/api/monitor") {
+    sendJson(response, 200, await resolveApiPayload(
+      "monitor",
+      requestUrl,
+      () => buildMonitorPayload(requestUrl.searchParams.get("filter") || "all", requestUrl.searchParams.get("interest") || "", forceRefresh)
+    ));
+    return;
+  }
+  if (requestUrl.pathname.startsWith("/api/events/")) {
+    const eventId = decodeURIComponent(requestUrl.pathname.replace("/api/events/", ""));
+    sendJson(response, 200, await resolveApiPayload(
+      "events",
+      requestUrl,
+      () => buildEventPayload(eventId, forceRefresh),
+      eventId
+    ));
+    return;
+  }
+  if (requestUrl.pathname === "/api/events") {
+    sendJson(response, 200, await resolveApiPayload(
+      "events",
+      requestUrl,
+      () => buildEventPayload(requestUrl.searchParams.get("id") || "", forceRefresh)
+    ));
+    return;
+  }
+  if (requestUrl.pathname === "/api/warnings") {
+    sendJson(response, 200, await resolveApiPayload(
+      "warnings",
+      requestUrl,
+      () => buildWarningsPayload(requestUrl.searchParams.get("interest") || "", forceRefresh)
+    ));
+    return;
+  }
+  if (requestUrl.pathname === "/api/search") {
+    sendJson(response, 200, await resolveApiPayload(
+      "search",
+      requestUrl,
+      () => buildSearchPayload(requestUrl.searchParams.get("query") || "", requestUrl.searchParams.get("interest") || "", forceRefresh)
+    ));
+    return;
+  }
   sendNotFound(response);
 }
 
@@ -753,15 +1207,17 @@ async function serveStaticFile(requestUrl, response) {
 
 const server = http.createServer(async (request, response) => {
   try {
+    const requestUrl = new URL(request.url, `http://${request.headers.host}`);
+    if (requestUrl.pathname.startsWith("/api/")) {
+      await handleApiRequest(request, requestUrl, response);
+      return;
+    }
+
     if (request.method !== "GET") {
       sendJson(response, 405, { error: "Method not allowed" });
       return;
     }
-    const requestUrl = new URL(request.url, `http://${request.headers.host}`);
-    if (requestUrl.pathname.startsWith("/api/")) {
-      await handleApiRequest(requestUrl, response);
-      return;
-    }
+
     await serveStaticFile(requestUrl, response);
   } catch (error) {
     console.error(error);

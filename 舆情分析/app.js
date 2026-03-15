@@ -3,14 +3,23 @@ const API_BASE = window.location.protocol === "file:" ? "http://localhost:4173" 
 const PAGE_REFRESH_MS = 60_000;
 const DEFAULT_INTERESTS = ["brand", "product"];
 const MAX_INTERESTS = 3;
+const THEME_OPTIONS = [
+  { key: "ocean", label: "清爽蓝绿", note: "默认配色，适合日常查看。" },
+  { key: "warm", label: "柔和米杏", note: "更温和，适合长时间阅读。" },
+  { key: "slate", label: "沉稳灰蓝", note: "对比更强，适合展示场景。" }
+];
 const STORAGE_KEYS = {
   interests: "pulse_scope_interests",
   pushEnabled: "pulse_scope_push_enabled",
   seenIds: "pulse_scope_seen_recommendations",
-  seenSignals: "pulse_scope_seen_push_signals"
+  seenSignals: "pulse_scope_seen_push_signals",
+  theme: "pulse_scope_theme"
 };
 
 const pageState = {
+  auth: {
+    user: null
+  },
   dashboard: {
     payload: null,
     timer: null,
@@ -41,6 +50,10 @@ const pageState = {
     pushEnabled: readBooleanPreference(STORAGE_KEYS.pushEnabled, true),
     seenRecommendationIds: readListPreference(STORAGE_KEYS.seenIds, []),
     seenSignalIds: readListPreference(STORAGE_KEYS.seenSignals, [])
+  },
+  ui: {
+    theme: readStringPreference(STORAGE_KEYS.theme, "ocean"),
+    settingsOpen: false
   }
 };
 
@@ -59,7 +72,15 @@ const activeButtonSelectors = [
   '[data-action="toggle-warning-translation"]',
   '[data-action="copy-warning-brief"]',
   '[data-action="download-warning-brief"]',
-  '[data-action="toggle-push"]'
+  '[data-action="toggle-push"]',
+  '[data-action="test-external-api"]',
+  '[data-action="save-external-api"]',
+  '[data-action="disable-external-api"]',
+  '[data-action="toggle-sidebar-settings"]',
+  '[data-action="close-sidebar-settings"]',
+  '[data-action="select-theme"]',
+  '[data-action="submit-login"]',
+  '[data-action="logout"]'
 ];
 
 let toastTimer = null;
@@ -93,6 +114,15 @@ function readListPreference(key, fallbackValue) {
   }
 }
 
+function readStringPreference(key, fallbackValue) {
+  try {
+    const savedValue = window.localStorage.getItem(key);
+    return savedValue ? String(savedValue) : fallbackValue;
+  } catch {
+    return fallbackValue;
+  }
+}
+
 function writePreference(key, value) {
   try {
     window.localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
@@ -116,6 +146,402 @@ function showToast(message) {
   toastTimer = window.setTimeout(() => {
     toast.classList.remove("is-visible");
   }, 2400);
+}
+
+function isAdminUser() {
+  return pageState.auth.user?.role === "admin";
+}
+
+function stopAutoRefreshTimers() {
+  ["dashboard", "monitor", "detail", "warning"].forEach((key) => {
+    if (pageState[key]?.timer) {
+      window.clearInterval(pageState[key].timer);
+      pageState[key].timer = null;
+    }
+  });
+}
+
+function setAuthError(message = "") {
+  const errorElement = document.getElementById("auth-error");
+  if (!errorElement) {
+    return;
+  }
+
+  errorElement.textContent = message;
+  errorElement.classList.toggle("is-hidden", !message);
+}
+
+function setAppLocked(isLocked, message = "请输入账号密码进入工作台。") {
+  const overlay = document.getElementById("auth-overlay");
+  document.body.classList.toggle("auth-locked", isLocked);
+
+  if (overlay) {
+    overlay.classList.toggle("is-visible", isLocked);
+  }
+
+  const note = document.getElementById("auth-overlay-note");
+  if (note) {
+    note.textContent = message;
+  }
+
+  if (isLocked) {
+    pageState.ui.settingsOpen = false;
+    document.getElementById("sidebar-settings-drawer")?.classList.add("is-hidden");
+    stopAutoRefreshTimers();
+  }
+}
+
+function applyTheme(themeKey, persist = true) {
+  const matchedTheme = THEME_OPTIONS.find((item) => item.key === themeKey) || THEME_OPTIONS[0];
+  pageState.ui.theme = matchedTheme.key;
+  document.body.dataset.theme = matchedTheme.key;
+
+  if (persist) {
+    writePreference(STORAGE_KEYS.theme, matchedTheme.key);
+  }
+
+  document.querySelectorAll("[data-theme-key]").forEach((button) => {
+    const isActive = button.dataset.themeKey === matchedTheme.key;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function mountSidebarSettings() {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar || document.getElementById("sidebar-settings-drawer")) {
+    return;
+  }
+
+  const themeOptionsMarkup = THEME_OPTIONS.map((option) => `
+    <button
+      class="theme-option"
+      type="button"
+      data-action="select-theme"
+      data-theme-key="${escapeHtml(option.key)}"
+      aria-pressed="false"
+    >
+      <span class="theme-option-title">${escapeHtml(option.label)}</span>
+      <span class="theme-option-note">${escapeHtml(option.note)}</span>
+    </button>
+  `).join("");
+
+  sidebar.insertAdjacentHTML("beforeend", `
+    <section class="sidebar-footer">
+      <div class="sidebar-account-card">
+        <p class="panel-label">当前账号</p>
+        <strong id="sidebar-account-name">未登录</strong>
+        <p class="sidebar-account-meta" id="sidebar-account-meta">登录后即可查看工作台。</p>
+      </div>
+
+      <button class="ghost-button sidebar-settings-button" type="button" data-action="toggle-sidebar-settings">设置</button>
+
+      <div class="settings-drawer is-hidden" id="sidebar-settings-drawer">
+        <div class="settings-drawer-header">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h3>设置</h3>
+          </div>
+          <button class="ghost-button settings-close-button" type="button" data-action="close-sidebar-settings">收起</button>
+        </div>
+
+        <section class="settings-section">
+          <p class="panel-label">背景颜色</p>
+          <div class="theme-option-list">
+            ${themeOptionsMarkup}
+          </div>
+        </section>
+
+        <section class="settings-section is-hidden" id="settings-api-section">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">API Connect</p>
+              <h3>外部 API</h3>
+            </div>
+            <span class="text-muted" id="external-api-status">当前使用本地分析引擎</span>
+          </div>
+          <div class="settings-input-grid">
+            <input id="external-api-base-url" class="search-input" type="url" placeholder="API 基地址，例如 https://api.example.com">
+            <input id="external-api-token" class="search-input" type="password" placeholder="Bearer Token，可选">
+            <input id="external-api-dashboard-endpoint" class="search-input" type="text" placeholder="Dashboard 接口，默认 /dashboard">
+            <input id="external-api-search-endpoint" class="search-input" type="text" placeholder="Search 接口，默认 /search">
+          </div>
+          <div class="settings-action-row">
+            <button class="ghost-button" type="button" data-action="test-external-api">测试连接</button>
+            <button class="primary-button" type="button" data-action="save-external-api">保存并启用</button>
+            <button class="ghost-button" type="button" data-action="disable-external-api">关闭外部 API</button>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <p class="panel-label">账号</p>
+          <p class="settings-auth-summary" id="settings-auth-summary">未登录</p>
+          <button class="ghost-button sidebar-logout-button" type="button" data-action="logout">退出登录</button>
+        </section>
+      </div>
+    </section>
+  `);
+}
+
+function mountLoginOverlay() {
+  if (document.getElementById("auth-overlay")) {
+    return;
+  }
+
+  document.body.insertAdjacentHTML("beforeend", `
+    <div class="auth-overlay" id="auth-overlay">
+      <div class="auth-card">
+        <div class="brand auth-brand">
+          <div class="brand-mark">PS</div>
+          <div>
+            <p class="brand-title">PulseScope</p>
+            <p class="brand-subtitle">登录后进入舆情工作台</p>
+          </div>
+        </div>
+
+        <p class="eyebrow">Login</p>
+        <h2>登录系统</h2>
+        <p class="hero-note auth-note" id="auth-overlay-note">请输入账号密码进入工作台。</p>
+
+        <form class="auth-form" id="auth-form">
+          <label class="auth-field">
+            <span>账号</span>
+            <input id="auth-username" class="auth-input" type="text" autocomplete="username" placeholder="请输入账号">
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <input id="auth-password" class="auth-input" type="password" autocomplete="current-password" placeholder="请输入密码">
+          </label>
+          <p class="auth-error is-hidden" id="auth-error"></p>
+          <button class="primary-button auth-submit" type="submit" data-action="submit-login">登录</button>
+        </form>
+
+        <p class="auth-footnote">管理员可配置外部 API 和展示设置，普通用户只看核心内容。</p>
+      </div>
+    </div>
+  `);
+}
+
+function updateShellState() {
+  const user = pageState.auth.user;
+  const accountName = document.getElementById("sidebar-account-name");
+  const accountMeta = document.getElementById("sidebar-account-meta");
+  const authSummary = document.getElementById("settings-auth-summary");
+  const apiSection = document.getElementById("settings-api-section");
+
+  if (accountName) {
+    accountName.textContent = user?.displayName || "未登录";
+  }
+
+  if (accountMeta) {
+    accountMeta.textContent = user ? `${user.username} · ${user.role === "admin" ? "管理员" : "普通用户"}` : "登录后即可查看工作台。";
+  }
+
+  if (authSummary) {
+    authSummary.textContent = user
+      ? `当前登录为 ${user.displayName}（${user.username}），${user.role === "admin" ? "可以管理 API 设置。" : "当前账号为普通用户。"}`
+      : "当前未登录。";
+  }
+
+  if (apiSection) {
+    apiSection.classList.toggle("is-hidden", !isAdminUser());
+  }
+}
+
+function toggleSettingsDrawer(nextState) {
+  const drawer = document.getElementById("sidebar-settings-drawer");
+  if (!drawer) {
+    return;
+  }
+
+  pageState.ui.settingsOpen = typeof nextState === "boolean" ? nextState : !pageState.ui.settingsOpen;
+  drawer.classList.toggle("is-hidden", !pageState.ui.settingsOpen);
+}
+
+async function handleLogout() {
+  try {
+    await requestJson("/api/auth/logout", { method: "POST", skipAuthHandling: true });
+  } catch {
+    // Ignore logout failures and still refresh the page.
+  }
+
+  window.location.reload();
+}
+
+async function bindSharedShellActions() {
+  document.querySelectorAll('[data-action="toggle-sidebar-settings"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      toggleSettingsDrawer();
+    });
+  });
+
+  document.querySelectorAll('[data-action="close-sidebar-settings"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      toggleSettingsDrawer(false);
+    });
+  });
+
+  document.querySelectorAll('[data-action="select-theme"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      applyTheme(button.dataset.themeKey || "ocean");
+    });
+  });
+
+  const authForm = document.getElementById("auth-form");
+  if (authForm && authForm.dataset.bound !== "true") {
+    authForm.dataset.bound = "true";
+    authForm.addEventListener("submit", async(event) => {
+      event.preventDefault();
+      const submitButton = authForm.querySelector('[data-action="submit-login"]');
+      const username = document.getElementById("auth-username")?.value.trim() || "";
+      const password = document.getElementById("auth-password")?.value || "";
+
+      if (!username || !password) {
+        setAuthError("请输入账号和密码。");
+        return;
+      }
+
+      setAuthError("");
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "登录中...";
+      }
+
+      try {
+        await requestJson("/api/auth/login", {
+          method: "POST",
+          body: { username, password },
+          skipAuthHandling: true
+        });
+        window.location.reload();
+      } catch (error) {
+        setAuthError(error.message || "登录失败，请重试。");
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "登录";
+        }
+      }
+    });
+  }
+
+  document.querySelectorAll('[data-action="logout"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      handleLogout();
+    });
+  });
+
+  document.querySelectorAll('[data-action="test-external-api"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", async() => {
+      try {
+        await testExternalApiConfig();
+      } catch (error) {
+        showToast(error.message || "外部 API 测试失败。");
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-action="save-external-api"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", async() => {
+      try {
+        await saveExternalApiConfig(true);
+        reloadCurrentPage(true);
+      } catch (error) {
+        showToast(error.message || "外部 API 配置保存失败。");
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-action="disable-external-api"]').forEach((button) => {
+    if (button.dataset.bound === "true") {
+      return;
+    }
+
+    button.dataset.bound = "true";
+    button.addEventListener("click", async() => {
+      try {
+        await saveExternalApiConfig(false);
+        reloadCurrentPage(true);
+      } catch (error) {
+        showToast(error.message || "关闭外部 API 失败。");
+      }
+    });
+  });
+}
+
+async function loadAuthStatus() {
+  try {
+    const payload = await requestJson("/api/auth/status", { skipAuthHandling: true });
+    pageState.auth.user = payload.authenticated ? payload.user : null;
+    updateShellState();
+
+    if (!payload.authenticated) {
+      setAppLocked(true, "请输入账号密码进入工作台。");
+      return false;
+    }
+
+    setAppLocked(false);
+    setAuthError("");
+
+    if (isAdminUser()) {
+      await loadExternalApiConfig();
+    }
+
+    return true;
+  } catch {
+    pageState.auth.user = null;
+    updateShellState();
+    setAppLocked(true, "登录状态检查失败，请重新登录。");
+    return false;
+  }
+}
+
+function reloadCurrentPage(forceRefresh = true) {
+  if (currentPage === "dashboard") {
+    loadDashboard(forceRefresh);
+  }
+
+  if (currentPage === "monitor") {
+    loadMonitor(pageState.monitor.currentFilter || "all", forceRefresh);
+  }
+
+  if (currentPage === "detail") {
+    loadDetail(pageState.detail.currentId, forceRefresh);
+  }
+
+  if (currentPage === "warning") {
+    loadWarnings(forceRefresh);
+  }
 }
 
 function normalizeFilename(value, fallbackName) {
@@ -192,14 +618,190 @@ function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+function getShortChartLabel(label, maxLength = 6) {
+  const safeLabel = String(label || "").trim();
+  return safeLabel.length > maxLength ? `${safeLabel.slice(0, maxLength)}…` : safeLabel;
+}
+
+function getChartColor(index) {
+  return `var(--chart-${(index % 6) + 1})`;
+}
+
+function renderColumnChart(containerId, items, options = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    return;
+  }
+
+  if (!items?.length) {
+    container.innerHTML = '<p class="empty-state">当前暂无图表数据。</p>';
+    return;
+  }
+
+  const width = 640;
+  const height = 300;
+  const padding = { top: 20, right: 18, bottom: 70, left: 22 };
+  const innerWidth = width - padding.left - padding.right;
+  const innerHeight = height - padding.top - padding.bottom;
+  const values = items.map((item) => Number(item.value) || 0);
+  const maxValue = Math.max(options.maxValue || 0, ...values, 1);
+  const slots = innerWidth / items.length;
+  const barWidth = Math.min(64, slots * 0.56);
+  const valueFormatter = options.valueFormatter || ((value) => String(value));
+  const showLegend = options.showLegend !== false;
+  const gridLines = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    const y = padding.top + innerHeight - innerHeight * ratio;
+    const value = Math.round(maxValue * ratio);
+    return `
+      <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" style="stroke: var(--line); stroke-width: 1;" />
+      <text x="${padding.left}" y="${y - 6}" style="fill: var(--muted); font-size: 11px;">${escapeHtml(valueFormatter(value))}</text>
+    `;
+  }).join("");
+
+  const bars = items.map((item, index) => {
+    const value = Number(item.value) || 0;
+    const color = item.color || getChartColor(index);
+    const slotX = padding.left + slots * index;
+    const x = slotX + (slots - barWidth) / 2;
+    const barHeight = Math.max((value / maxValue) * innerHeight, 10);
+    const y = padding.top + innerHeight - barHeight;
+    const label = escapeHtml(getShortChartLabel(item.shortLabel || item.label, options.labelLength || 6));
+    const fullLabel = escapeHtml(String(item.label || ""));
+
+    return `
+      <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="14" ry="14" style="fill: ${color}; opacity: 0.92;" />
+      <text x="${x + barWidth / 2}" y="${Math.max(y - 8, 14)}" text-anchor="middle" style="fill: var(--primary-deep); font-size: 12px; font-weight: 700;">
+        ${escapeHtml(valueFormatter(value, item))}
+      </text>
+      <text x="${x + barWidth / 2}" y="${height - 24}" text-anchor="middle" style="fill: var(--text); font-size: 12px; font-weight: 600;">
+        ${label}
+      </text>
+      <title>${fullLabel}：${escapeHtml(valueFormatter(value, item))}</title>
+    `;
+  }).join("");
+
+  const legend = showLegend ? `
+    <div class="chart-legend">
+      ${items.map((item, index) => `
+        <div class="chart-legend-item">
+          <span class="chart-legend-swatch" style="background: ${item.color || getChartColor(index)}"></span>
+          <div>
+            <strong>${escapeHtml(item.label)}</strong>
+            <span>${escapeHtml(valueFormatter(Number(item.value) || 0, item))}</span>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
+
+  container.innerHTML = `
+    <div class="chart-stage">
+      <svg class="chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(options.ariaLabel || "柱状图")}">
+        ${gridLines}
+        ${bars}
+      </svg>
+    </div>
+    ${legend}
+    ${options.note ? `<p class="chart-note">${escapeHtml(options.note)}</p>` : ""}
+  `;
+}
+
+function renderRadarChart(containerId, items, options = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    return;
+  }
+
+  if (!items?.length) {
+    container.innerHTML = '<p class="empty-state">当前暂无图表数据。</p>';
+    return;
+  }
+
+  const size = 360;
+  const center = size / 2;
+  const radius = 108;
+  const levels = [0.25, 0.5, 0.75, 1];
+  const maxValue = Math.max(options.maxValue || 0, ...items.map((item) => Number(item.value) || 0), 1);
+  const valueFormatter = options.valueFormatter || ((value) => String(value));
+
+  function getPoint(index, ratio, distance = radius) {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / items.length;
+    return {
+      x: center + Math.cos(angle) * distance * ratio,
+      y: center + Math.sin(angle) * distance * ratio
+    };
+  }
+
+  const rings = levels.map((level) => {
+    const points = items.map((_, index) => {
+      const point = getPoint(index, level);
+      return `${point.x},${point.y}`;
+    }).join(" ");
+
+    return `<polygon points="${points}" style="fill: none; stroke: var(--line); stroke-width: 1;" />`;
+  }).join("");
+
+  const axes = items.map((item, index) => {
+    const axisPoint = getPoint(index, 1);
+    const labelPoint = getPoint(index, 1.16);
+    const anchor = labelPoint.x < center - 18 ? "end" : labelPoint.x > center + 18 ? "start" : "middle";
+    const dy = labelPoint.y > center + 60 ? 14 : labelPoint.y < center - 60 ? -6 : 4;
+
+    return `
+      <line x1="${center}" y1="${center}" x2="${axisPoint.x}" y2="${axisPoint.y}" style="stroke: var(--line); stroke-width: 1;" />
+      <text x="${labelPoint.x}" y="${labelPoint.y + dy}" text-anchor="${anchor}" style="fill: var(--text); font-size: 12px; font-weight: 600;">
+        ${escapeHtml(item.label)}
+      </text>
+    `;
+  }).join("");
+
+  const valuePoints = items.map((item, index) => {
+    const point = getPoint(index, (Number(item.value) || 0) / maxValue);
+    return `${point.x},${point.y}`;
+  }).join(" ");
+
+  const markers = items.map((item, index) => {
+    const point = getPoint(index, (Number(item.value) || 0) / maxValue);
+    const color = item.color || getChartColor(index);
+    return `
+      <circle cx="${point.x}" cy="${point.y}" r="5.5" style="fill: ${color}; stroke: #fff; stroke-width: 2;" />
+      <title>${escapeHtml(item.label)}：${escapeHtml(valueFormatter(Number(item.value) || 0, item))}</title>
+    `;
+  }).join("");
+
+  container.innerHTML = `
+    <div class="chart-stage chart-stage-radar">
+      <svg class="chart-svg" viewBox="0 0 ${size} ${size}" role="img" aria-label="${escapeHtml(options.ariaLabel || "雷达图")}">
+        ${rings}
+        ${axes}
+        <polygon points="${valuePoints}" style="fill: rgba(15, 109, 122, 0.16); stroke: var(--primary); stroke-width: 3;" />
+        ${markers}
+      </svg>
+    </div>
+    <div class="chart-legend">
+      ${items.map((item, index) => `
+        <div class="chart-legend-item">
+          <span class="chart-legend-swatch" style="background: ${item.color || getChartColor(index)}"></span>
+          <div>
+            <strong>${escapeHtml(item.label)}</strong>
+            <span>${escapeHtml(valueFormatter(Number(item.value) || 0, item))}</span>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+    ${options.note ? `<p class="chart-note">${escapeHtml(options.note)}</p>` : ""}
+  `;
+}
+
 function getClientRisk(score) {
   if (score >= 120) {
-    return { text: "楂樻尝鍔?, className: "badge-warn" };
+    return { text: "高波动", className: "badge-warn" };
   }
   if (score >= 60) {
-    return { text: "鍏虫敞涓?, className: "badge-mid" };
+    return { text: "关注中", className: "badge-mid" };
   }
-  return { text: "绋冲畾", className: "badge-safe" };
+  return { text: "稳定", className: "badge-safe" };
 }
 
 function buildInterestQuery() {
@@ -311,17 +913,39 @@ async function requestJson(path, options = {}) {
       ...(options.headers || {})
     },
     method: options.method || "GET",
-    body: options.body ? JSON.stringify(options.body) : undefined
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    credentials: "same-origin"
   });
 
-  if (!response.ok) {
-    throw new Error(`请求失败: ${response.status}`);
+  const responseText = await response.text();
+  let payload = null;
+
+  if (responseText) {
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      payload = null;
+    }
   }
 
-  return response.json();
+  if (!response.ok) {
+    if (response.status === 401 && !options.skipAuthHandling) {
+      pageState.auth.user = null;
+      updateShellState();
+      setAppLocked(true, payload?.error || "登录已失效，请重新登录。");
+    }
+
+    throw new Error(payload?.error || `请求失败: ${response.status}`);
+  }
+
+  return payload;
 }
 
 async function loadExternalApiConfig() {
+  if (!isAdminUser()) {
+    return null;
+  }
+
   try {
     const config = await requestJson("/api/external-config");
     const baseUrlInput = document.getElementById("external-api-base-url");
@@ -356,6 +980,11 @@ function readExternalApiForm() {
 }
 
 async function saveExternalApiConfig(enabled = true) {
+  if (!isAdminUser()) {
+    showToast("只有管理员可以修改外部 API 设置。");
+    return null;
+  }
+
   const payload = readExternalApiForm();
   payload.enabled = enabled && Boolean(payload.base_url);
   const saved = await requestJson("/api/external-config", { method: "POST", body: payload });
@@ -365,6 +994,11 @@ async function saveExternalApiConfig(enabled = true) {
 }
 
 async function testExternalApiConfig() {
+  if (!isAdminUser()) {
+    showToast("只有管理员可以测试外部 API。");
+    return;
+  }
+
   try {
     const testPayload = await requestJson("/api/external-test");
     setStatusText("external-api-status", testPayload.message || "连接测试完成");
@@ -381,7 +1015,7 @@ function renderSentimentBars(containerId, items, showNotes = false) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤鎯呯华缁撴瀯鏁版嵁銆?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无情绪结构数据。</p>';
     return;
   }
 
@@ -408,7 +1042,7 @@ function renderSentimentRing(score, label) {
   const safeScore = clamp(Number(score) || 0, 0, 100);
   ring.style.setProperty("--ring-fill", `${safeScore / 100}`);
   setStatusText("dashboard-ring-value", safeScore);
-  setStatusText("dashboard-ring-label", label || "娉㈠姩鎸囨暟");
+  setStatusText("dashboard-ring-label", label || "波动指数");
 }
 
 function renderModelChannels(items) {
@@ -595,7 +1229,7 @@ function renderDashboardCategoryHeat(items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤涓婚鐑害鏁版嵁銆?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无主题热度数据。</p>';
     return;
   }
 
@@ -609,7 +1243,7 @@ function renderDashboardCategoryHeat(items) {
         <div class="category-bar">
           <i style="width: ${Math.max(item.percent, 6)}%"></i>
         </div>
-        <p class="category-foot">${formatNumber(item.totalHits)} 鏉″叕寮€鍐呭</p>
+        <p class="category-foot">${formatNumber(item.totalHits)} 条公开内容</p>
       </div>
     `)
     .join("");
@@ -622,7 +1256,7 @@ function renderTrendList(containerId, items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤瓒嬪娍鏁版嵁銆?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无走势数据。</p>';
     return;
   }
 
@@ -647,7 +1281,7 @@ function renderSourceList(containerId, items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤鏉ユ簮鏋勬垚鏁版嵁銆?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无来源构成数据。</p>';
     return;
   }
 
@@ -668,7 +1302,7 @@ function renderInsightTiles(items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤蹇€熷垽鏂唴瀹广€?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无快速结论内容。</p>';
     return;
   }
 
@@ -681,6 +1315,126 @@ function renderInsightTiles(items) {
       </article>
     `)
     .join("");
+}
+
+function renderDashboardCharts(payload) {
+  renderColumnChart(
+    "dashboard-topic-chart",
+    (payload.categoryHeat || []).map((item) => ({
+      label: item.label,
+      value: item.totalHits
+    })),
+    {
+      ariaLabel: "热点方向柱状图",
+      valueFormatter: (value) => `${formatNumber(value)}条`,
+      note: "把不同方向的讨论量直接画出来，方便普通用户一眼看出哪个方向最热。"
+    }
+  );
+
+  renderColumnChart(
+    "dashboard-trend-chart",
+    (payload.trend || []).map((item) => ({
+      label: item.label,
+      value: item.count,
+      shortLabel: item.label
+    })),
+    {
+      ariaLabel: "近七天趋势柱状图",
+      labelLength: 5,
+      valueFormatter: (value) => `${formatNumber(value)}条`,
+      showLegend: false,
+      note: "最近 7 天的变化越高，说明当天讨论越集中。"
+    }
+  );
+
+  renderRadarChart(
+    "dashboard-radar-chart",
+    (payload.multimodalModel?.channels || []).map((item, index) => ({
+      label: item.label,
+      value: item.score,
+      color: getChartColor(index)
+    })),
+    {
+      ariaLabel: "整体态势雷达图",
+      valueFormatter: (value) => `${Math.round(value)}分`,
+      note: "雷达图越外扩，说明这个话题在文本、传播和时间变化上越值得关注。"
+    }
+  );
+}
+
+function buildMonitorSituationMetrics(payload) {
+  const totalHits = Number(payload.stats?.totalHits) || 0;
+  const matchedPreferences = Number(payload.stats?.matchedPreferences) || 0;
+  const averageComments = Number(payload.stats?.averageComments) || 0;
+  const highRisk = Number(payload.stats?.highRisk) || 0;
+  const negativeRatio = Number((payload.sentiment || []).find((item) => item.key === "negative")?.value) || 0;
+
+  return [
+    {
+      label: "话题覆盖",
+      value: clamp(Math.round(totalHits * 8), 12, 100),
+      rawValue: `${formatNumber(totalHits)}条`
+    },
+    {
+      label: "偏好贴合",
+      value: clamp(Math.round((matchedPreferences / Math.max(1, totalHits)) * 100), 8, 100),
+      rawValue: `${formatNumber(matchedPreferences)}条`
+    },
+    {
+      label: "互动活跃",
+      value: clamp(Math.round(averageComments * 1.25), 10, 100),
+      rawValue: `${formatNumber(averageComments)}次`
+    },
+    {
+      label: "风险密度",
+      value: clamp(Math.round((highRisk / Math.max(1, totalHits)) * 100), 6, 100),
+      rawValue: `${formatNumber(highRisk)}项`
+    },
+    {
+      label: "情绪波动",
+      value: clamp(Math.round(negativeRatio), 10, 100),
+      rawValue: `${Math.round(negativeRatio)}%`
+    }
+  ];
+}
+
+function renderMonitorCharts(payload) {
+  renderColumnChart(
+    "monitor-heat-chart",
+    (payload.items || []).slice(0, 6).map((item) => ({
+      label: getDisplayTitle(item, pageState.monitor.translationEnabled),
+      value: item.score
+    })),
+    {
+      ariaLabel: "监测热点柱状图",
+      labelLength: 4,
+      valueFormatter: (value) => `${formatNumber(value)}分`,
+      note: "分数越高，说明这条内容当前越值得优先关注。"
+    }
+  );
+
+  renderColumnChart(
+    "monitor-sentiment-chart",
+    (payload.sentiment || []).map((item) => ({
+      label: item.label,
+      value: item.value
+    })),
+    {
+      ariaLabel: "情绪占比柱状图",
+      valueFormatter: (value) => `${Math.round(value)}%`,
+      note: "让不看细节的人也能快速知道当前讨论更偏正面、中性还是负面。"
+    }
+  );
+
+  renderRadarChart(
+    "monitor-radar-chart",
+    buildMonitorSituationMetrics(payload),
+    {
+      ariaLabel: "监测态势雷达图",
+      valueFormatter: (value, item) => item.rawValue || `${Math.round(value)}`,
+      note: "把当前这一类话题的热度、互动、风险和偏好贴合度放在一张图里。"
+    }
+  );
 }
 
 function renderRecommendationList(containerId, emptyId, items, translationEnabled) {
@@ -708,14 +1462,14 @@ function renderRecommendationList(containerId, emptyId, items, translationEnable
       return `
         <article class="recommendation-card">
           <div class="recommendation-meta">
-            <span class="soft-badge">${escapeHtml(item.categoryLabel || "鎺ㄨ崘鍐呭")}</span>
+            <span class="soft-badge">${escapeHtml(item.categoryLabel || "推荐内容")}</span>
             <span class="badge ${risk.className}">${escapeHtml(risk.text)}</span>
           </div>
           ${renderTitleStack(item, translationEnabled, `./detail.html?id=${encodeURIComponent(item.id)}`)}
-          <p class="recommendation-reason">${escapeHtml(item.matchReason || "鍩轰簬瀹炴椂鐑害鎺ㄨ崘")}</p>
+          <p class="recommendation-reason">${escapeHtml(item.matchReason || "基于实时热度推荐")}</p>
           <div class="link-group">
-            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">鏌ョ湅璇︽儏</a>
-            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">鏌ョ湅鍘熸枃</a>
+            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">查看详情</a>
+            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看原文</a>
           </div>
         </article>
       `;
@@ -730,7 +1484,7 @@ function renderSignalTypeBoard(containerId, items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤鍙睍绀虹殑鎺ㄩ€佺被鍨嬨€?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无可展示的推送类型。</p>';
     return;
   }
 
@@ -740,12 +1494,12 @@ function renderSignalTypeBoard(containerId, items) {
         <div class="signal-type-top">
           <div>
             <p class="stat-title">${escapeHtml(item.label)}</p>
-            <p class="signal-note">${escapeHtml(item.description || "瀹炴椂鎺ㄩ€佺被鍨?)}</p>
+            <p class="signal-note">${escapeHtml(item.description || "实时推送类型")}</p>
           </div>
           <strong class="signal-type-value">${escapeHtml(String(item.count))}</strong>
         </div>
         <div class="signal-type-meta">
-          <span>${escapeHtml(item.count > 0 ? "娲昏穬涓? : "寰呭懡涓?)}</span>
+          <span>${escapeHtml(item.count > 0 ? "活跃中" : "待命中")}</span>
           <span>${escapeHtml(String(item.percent || 0))}%</span>
         </div>
       </article>
@@ -777,23 +1531,23 @@ function renderSignalList(containerId, emptyId, items, translationEnabled) {
       <article class="signal-card">
         <div class="signal-card-top">
           <div class="recommendation-meta">
-            <span class="soft-badge">${escapeHtml(item.typeLabel || "鎺ㄩ€佷俊鍙?)}</span>
-            <span class="soft-badge ${item.isPreferred ? "is-strong" : ""}">${escapeHtml(item.categoryLabel || "瀹炴椂璇濋")}</span>
+            <span class="soft-badge">${escapeHtml(item.typeLabel || "推送信号")}</span>
+            <span class="soft-badge ${item.isPreferred ? "is-strong" : ""}">${escapeHtml(item.categoryLabel || "实时话题")}</span>
           </div>
-          <span class="badge ${escapeHtml(item.riskClass || "badge-safe")}">${escapeHtml(item.riskText || "鍏虫敞涓?)}</span>
+          <span class="badge ${escapeHtml(item.riskClass || "badge-safe")}">${escapeHtml(item.riskText || "关注中")}</span>
         </div>
         ${renderTitleStack(item, translationEnabled, `./detail.html?id=${encodeURIComponent(item.id)}`)}
         <div class="signal-card-body">
-          <p class="signal-note">${escapeHtml(item.reason || item.typeDescription || "绯荤粺璇嗗埆鍒版柊鐨勬帹閫佷俊鍙枫€?)}</p>
+          <p class="signal-note">${escapeHtml(item.reason || item.typeDescription || "系统识别到了新的推送信号。")}</p>
           <div class="signal-meta">
-            <span>淇″彿寮哄害 ${escapeHtml(String(item.signalScore || 0))}</span>
+            <span>信号强度 ${escapeHtml(String(item.signalScore || 0))}</span>
             <span>${escapeHtml(formatDateTime(item.createdAt))}</span>
             <span>${escapeHtml(item.source || "--")}</span>
           </div>
-          <p class="forecast-watch">${escapeHtml(item.actionHint || "寤鸿缁х画瑙傚療鍐呭鍙樺寲鍜屼簰鍔ㄩ€熷害銆?)}</p>
+          <p class="forecast-watch">${escapeHtml(item.actionHint || "建议继续观察内容变化和互动速度。")}</p>
           <div class="link-group">
-            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">鏌ョ湅璇︽儏</a>
-            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">鏌ョ湅鍘熸枃</a>
+            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">查看详情</a>
+            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看原文</a>
           </div>
         </div>
       </article>
@@ -907,7 +1661,7 @@ function renderTagCloud(items) {
   }
 
   if (!items.length) {
-    container.innerHTML = '<p class="empty-state">褰撳墠鏆傛棤鏍囩鏁版嵁銆?/p>';
+    container.innerHTML = '<p class="empty-state">当前暂无标签数据。</p>';
     return;
   }
 
@@ -1015,6 +1769,7 @@ function renderDashboard(payload) {
 
   renderSentimentBars("dashboard-sentiment-bars", payload.sentiment, true);
   renderSentimentRing(payload.stats.volatilityIndex, "波动指数");
+  renderDashboardCharts(payload);
   renderDashboardCategoryHeat(payload.categoryHeat || []);
   setStatusText("dashboard-model-summary", payload.multimodalModel?.summary || "正在生成模型分析摘要。");
   setStatusText("dashboard-model-score", `融合分数 ${payload.multimodalModel?.fusionScore || "--"}`);
@@ -1117,8 +1872,8 @@ function renderMonitorTable(items) {
         <td>${escapeHtml(String(item.comments))}</td>
         <td>
           <div class="link-group">
-            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">鏌ョ湅璇︽儏</a>
-            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">鏌ョ湅鍘熸枃</a>
+            <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">查看详情</a>
+            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看原文</a>
           </div>
         </td>
       </tr>
@@ -1150,6 +1905,7 @@ function renderMonitor(payload) {
 
   renderMonitorFeed(payload.items || []);
   renderMonitorTable(payload.items || []);
+  renderMonitorCharts(payload);
   renderTagCloud(payload.tags || []);
   renderSentimentBars("monitor-sentiment-bars", payload.sentiment || [], true);
   renderPreferenceChips("monitor-preference-chips", payload.preferenceOptions || [], payload.selectedPreferences || []);
@@ -1316,8 +2072,8 @@ function renderDetailRelated(items) {
           <p>来源：${escapeHtml(item.source)} / 发布时间：${escapeHtml(formatDateTime(item.createdAt))} / 热度：${escapeHtml(String(item.score))}</p>
         </div>
         <div class="link-group">
-          <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">缁х画鏌ョ湅</a>
-          <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">鏌ョ湅鍘熸枃</a>
+          <a class="text-link" href="./detail.html?id=${encodeURIComponent(item.id)}">继续查看</a>
+          <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看原文</a>
         </div>
       </article>
     `)
@@ -1342,14 +2098,14 @@ function renderForecastCards(forecast) {
       <article class="forecast-card">
         <div class="forecast-card-top">
           <div>
-            <p class="forecast-label">${escapeHtml(item.horizon || "鏈潵闃舵")}</p>
-            <h4>${escapeHtml(item.direction || "璧板娍寰呭畾")}</h4>
+            <p class="forecast-label">${escapeHtml(item.horizon || "未来阶段")}</p>
+            <h4>${escapeHtml(item.direction || "走势待定")}</h4>
           </div>
           <strong class="forecast-score">${escapeHtml(String(item.score || 0))}</strong>
         </div>
         <div class="forecast-card-body">
-          <p class="forecast-note">${escapeHtml(item.note || "绯荤粺姝ｅ湪鐢熸垚瓒嬪娍璇存槑銆?)}</p>
-          <p class="forecast-watch">${escapeHtml(item.watch || "寤鸿缁х画鍏虫敞鏂板璁ㄨ銆?)}</p>
+          <p class="forecast-note">${escapeHtml(item.note || "系统正在生成趋势说明。")}</p>
+          <p class="forecast-watch">${escapeHtml(item.watch || "建议继续关注新增讨论。")}</p>
         </div>
       </article>
     `)
@@ -1374,13 +2130,13 @@ function renderReactionList(items) {
       <article class="reaction-item">
         <div class="reaction-card-top">
           <div>
-            <h4>${escapeHtml(item.group || "鍏虫敞浜虹兢")}</h4>
-            <p class="reaction-note">${escapeHtml(item.focus || "鍏虫敞鐐瑰緟鏇存柊")}</p>
+            <h4>${escapeHtml(item.group || "关注人群")}</h4>
+            <p class="reaction-note">${escapeHtml(item.focus || "关注点待更新")}</p>
           </div>
-          <span class="soft-badge">${escapeHtml(item.intensity || "涓瓑鍙備笌")}</span>
+          <span class="soft-badge">${escapeHtml(item.intensity || "中等参与")}</span>
         </div>
-        <p>${escapeHtml(item.outlook || "绯荤粺姝ｅ湪鐢熸垚琛屼负棰勫垽銆?)}</p>
-        <p class="reaction-strong">${escapeHtml(item.predictedEmotion || "鏇村浼氱瓑寰呭悗缁俊鎭€?)}</p>
+        <p>${escapeHtml(item.outlook || "系统正在生成行为预判。")}</p>
+        <p class="reaction-strong">${escapeHtml(item.predictedEmotion || "更多会等待后续信息。")}</p>
         <p class="reaction-trigger">${escapeHtml(item.trigger || "后续回应质量会直接影响表达方向。")}</p>
       </article>
     `)
@@ -1555,8 +2311,8 @@ function renderWarningTable(items) {
         <td>
           <div>${escapeHtml(item.advice)}</div>
           <div class="link-group">
-            <a class="text-link" href="${escapeHtml(item.detailUrl || `./detail.html?id=${encodeURIComponent(item.id)}`)}">浜嬩欢璇︽儏</a>
-            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">鏌ョ湅鍘熸枃</a>
+            <a class="text-link" href="${escapeHtml(item.detailUrl || `./detail.html?id=${encodeURIComponent(item.id)}`)}">事件详情</a>
+            <a class="text-link" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">查看原文</a>
           </div>
         </td>
       </tr>
@@ -1714,9 +2470,6 @@ function initDashboardPage() {
   const translationButton = document.querySelector('[data-action="toggle-dashboard-translation"]');
   const searchButton = document.querySelector('[data-action="search-dashboard"]');
   const clearSearchButton = document.querySelector('[data-action="clear-dashboard-search"]');
-  const testExternalApiButton = document.querySelector('[data-action="test-external-api"]');
-  const saveExternalApiButton = document.querySelector('[data-action="save-external-api"]');
-  const disableExternalApiButton = document.querySelector('[data-action="disable-external-api"]');
   const searchInput = document.getElementById("dashboard-search-input");
 
   if (refreshButton) {
@@ -1761,26 +2514,6 @@ function initDashboardPage() {
       if (event.key === "Enter") {
         loadDashboardSearch(searchInput.value || "");
       }
-    });
-  }
-
-  if (testExternalApiButton) {
-    testExternalApiButton.addEventListener("click", () => {
-      testExternalApiConfig();
-    });
-  }
-
-  if (saveExternalApiButton) {
-    saveExternalApiButton.addEventListener("click", async() => {
-      await saveExternalApiConfig(true);
-      loadDashboard(true);
-    });
-  }
-
-  if (disableExternalApiButton) {
-    disableExternalApiButton.addEventListener("click", async() => {
-      await saveExternalApiConfig(false);
-      loadDashboard(true);
     });
   }
 
@@ -1919,23 +2652,41 @@ function initPrototypeButtons() {
   });
 }
 
-if (currentPage === "dashboard") {
-  initDashboardPage();
+function startCurrentPage() {
+  if (currentPage === "dashboard") {
+    initDashboardPage();
+  }
+
+  if (currentPage === "monitor") {
+    initMonitorPage();
+  }
+
+  if (currentPage === "detail") {
+    initDetailPage();
+  }
+
+  if (currentPage === "warning") {
+    initWarningPage();
+  }
 }
 
-if (currentPage === "monitor") {
-  initMonitorPage();
+async function bootstrapApp() {
+  mountSidebarSettings();
+  mountLoginOverlay();
+  updateShellState();
+  applyTheme(pageState.ui.theme, false);
+  await bindSharedShellActions();
+  initPrototypeButtons();
+
+  const isAuthenticated = await loadAuthStatus();
+  if (!isAuthenticated) {
+    return;
+  }
+
+  startCurrentPage();
 }
 
-if (currentPage === "detail") {
-  initDetailPage();
-}
-
-if (currentPage === "warning") {
-  initWarningPage();
-}
-
-initPrototypeButtons();
+bootstrapApp();
 
 
 

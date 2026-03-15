@@ -36,7 +36,7 @@
         <div>
           <p class="eyebrow">Live Monitor</p>
           <h1>实时监测列表</h1>
-          <p class="hero-note">用一张工作台同时看最新内容流、情绪结构、标签和与你偏好匹配的推荐结果。</p>
+          <p class="hero-note">用更直观的图表把热度、情绪和风险变化展示出来，方便普通用户快速看懂当前情况。</p>
         </div>
         <div class="topbar-actions">
           <button class="ghost-button" type="button" data-action="refresh-monitor">刷新实时数据</button>
@@ -47,8 +47,8 @@
       <section class="source-banner">
         <div>
           <p class="eyebrow">Stream Layer</p>
-          <h2>监测页会同步展示舆情流和推荐命中</h2>
-          <p>除了内容本身，这里还会把情绪脉冲、偏好命中和推荐清单一起展示，方便你快速做判断。</p>
+          <h2>把当前类目的变化直接画出来</h2>
+          <p>这里会同时展示热点内容、情绪占比和整体态势雷达图，让不懂技术的人也能快速理解变化方向。</p>
         </div>
         <div class="source-meta">
           <span class="status-pill" id="monitor-source-status">等待加载</span>
@@ -76,6 +76,38 @@
           <p class="stat-title">高波动条目</p>
           <p class="stat-value" id="monitor-stat-risk">--</p>
           <p class="stat-foot">值得优先复核的内容</p>
+        </article>
+      </section>
+
+      <section class="visual-story-grid">
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Bar Chart</p>
+              <h3>当前最热内容</h3>
+            </div>
+          </div>
+          <div id="monitor-heat-chart"></div>
+        </article>
+
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Bar Chart</p>
+              <h3>情绪占比</h3>
+            </div>
+          </div>
+          <div id="monitor-sentiment-chart"></div>
+        </article>
+
+        <article class="panel chart-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Radar Chart</p>
+              <h3>当前态势雷达图</h3>
+            </div>
+          </div>
+          <div id="monitor-radar-chart"></div>
         </article>
       </section>
 
@@ -119,7 +151,7 @@
             <div class="panel-heading">
               <div>
                 <p class="eyebrow">Sentiment</p>
-                <h3>当前情绪结构</h3>
+                <h3>文字版情绪说明</h3>
               </div>
             </div>
             <div class="sentiment-bars" id="monitor-sentiment-bars"></div>
